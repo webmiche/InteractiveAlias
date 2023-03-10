@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+import argparse
+from typing import Sequence
+from subprocess import Popen, PIPE, run, DEVNULL
+
+
+class InteractiveAliasAnalysisDriver:
+    args: argparse.Namespace
+    """
+    The argument parsers namespace which holds the parsed commandline
+    attributes.
+    """
+
+    def register_all_arguments(self,
+                               arg_parser: argparse.ArgumentParser) -> None:
+        """
+        Registers all the command line arguments that are used by this tool.
+
+        Add other/additional arguments by overloading this function.
+        """
+        arg_parser.add_argument("input_file",
+                                type=str,
+                                nargs="?",
+                                help="path to input file")
+
+        arg_parser.add_argument(
+            "-op",
+            "--optpath",
+            type=str,
+            help="path to the opt binary",
+            default="../llvm-project/build_interact/bin/opt")
+
+        arg_parser.add_argument(
+            "-cp",
+            "--compilerpath",
+            type=str,
+            help="path to the compiler binary (needs to understand LLVM IR)",
+            default="../llvm-project/build_ast/bin/clang")
+
+    def __init__(self, args: Sequence[str] | None = None):
+
+        # arg handling
+        arg_parser = argparse.ArgumentParser()
+        self.register_all_arguments(arg_parser)
+        self.args = arg_parser.parse_args(args=args)
+
+    def run(self) -> None:
+        """
+        Runs the tool.
+        """
+        self.replace_single_query("NoAlias", 3)
+
+    def replace_single_query(self, to_replace: str,
+                             replacement: int) -> bool:
+        self.measure_single_modification_style(
+            to_replace,
+            modification_callback=lambda cmd, index: self.
+            execute_with_modifications(cmd, index, replacement))
+
+    def measure_single_modification_style(self, to_replace: str,
+                                          modification_callback):
+        self.get_ll_file(self.args.compilerpath, self.args.input_file)
+
+        cmd = [self.args.optpath, '-Os', 'csmith/file2.ll', '-S']
+
+        count = self.get_count_of_queries(cmd, to_replace)
+
+        print("Count is " + str(count))
+
+        for i in range(count):
+            if i % 10 == 0:
+                print("Modifying " + str(i))
+            if not modification_callback(cmd, i):
+                print("Modification failed for " + str(i))
+
+        print("Done with modifications")
+
+        # Compile groundtruth
+        run([
+            self.args.compilerpath, 'files_sache/truth.ll', '-o',
+            "files_sache/file.out"
+        ],
+            stdout=DEVNULL,
+            stderr=DEVNULL,
+            text=True)
+
+        for i in range(count):
+            if i % 10 == 0:
+                print("Compiling " + str(i))
+            if not self.compile_file(i):
+                print("Compilation failed for " + str(i))
+
+        print("Done with compilation")
+
+        # Measure groundtruth
+        true_size = self.measure_outputsize("files_sache/file.out")
+        print("True size is " + str(true_size))
+
+        for i in range(count):
+            size = self.measure_outputsize("files_sache/file" + str(i) +
+                                           ".out")
+            if size == -1:
+                print("Size measurement failed for " + str(i))
+            elif size != true_size:
+                print(str(i) + ": " + str(size))
+
+    def get_result_from_output(self, output: str) -> str:
+        return output.split(" ")[2][:-1]
+
+    def give_same_result(self, p, res: str):
+        if res == "NoAlias":
+            p.stdin.write("0\n")
+        elif res == "MustAlias":
+            p.stdin.write("1\n")
+        elif res == "PartialAlias":
+            p.stdin.write("2\n")
+        elif res == "MayAlias":
+            p.stdin.write("3\n")
+
+    # Runs the given compile command mapping AliasResults through substitutions
+    #
+    # Returns true if the modification was successful
+    def compile_with_substitutions(self, cmd: list[str],
+                                   substitutions: dict[str, int],
+                                   output_file_name: str) -> bool:
+        p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
+        line = p.stdout.readline().strip()
+        while not line.startswith("; ModuleID"):
+
+            if line.startswith("Failed"):
+                return False
+
+            curr_result = self.get_result_from_output(line)
+            p.stdin.write(str(substitutions[curr_result]) + "\n")
+
+            p.stdin.flush()
+            line = p.stdout.readline().strip()
+
+        output_file = open(output_file_name, 'w')
+        while line != "":
+            line = p.stdout.readline()
+            output_file.write(line)
+
+        return True
+
+    def get_ll_file(self, compiler_path: str, input_file: str) -> None:
+        cmd = compiler_path + " -S -emit-llvm -I/usr/include/csmith-2.3.0 -Xclang -disable-llvm-passes -o csmith/file2.ll " + input_file + " -O1"
+        run(cmd.split(" "), stdout=DEVNULL, stderr=DEVNULL, text=True)
+
+    # Given a command that runs opt, returns the number of MayAlias queries
+    #
+    # Returns -1 if the command or an input fails
+    # Write result into `files_sache/truth.ll`
+    def get_count_of_queries(self, cmd: list[str], to_replace: str) -> int:
+
+        p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
+        line = p.stdout.readline().strip()
+        count = 0
+
+        while not line.startswith("; ModuleID"):
+
+            if line.startswith("Failed"):
+                return -1
+
+            curr_result = self.get_result_from_output(line)
+            if curr_result == to_replace:
+                count = count + 1
+            self.give_same_result(p, curr_result)
+
+            p.stdin.flush()
+            line = p.stdout.readline().strip()
+
+        output_file = open("files_sache/truth.ll", 'w')
+        while line != "":
+            line = p.stdout.readline()
+            output_file.write(line)
+
+        return count
+
+    def repalce_nth_occurence(self, cmd: str, to_replace: str,
+                              modify_index: int, change_to: int) -> str:
+
+        p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
+        line = p.stdout.readline().strip()
+        index = 0
+        while not line.startswith("; ModuleID"):
+
+            if line.startswith("Failed"):
+                return False
+
+            curr_result = self.get_result_from_output(line)
+            if curr_result == to_replace and index == modify_index:
+                p.stdin.write(str(change_to) + "\n")
+            else:
+                self.give_same_result(p, curr_result)
+
+            if curr_result == to_replace:
+                index = index + 1
+
+            p.stdin.flush()
+            line = p.stdout.readline().strip()
+
+        output_file = open("files_sache/file" + str(modify_index) + ".ll", 'w')
+        while line != "":
+            line = p.stdout.readline()
+            output_file.write(line)
+
+        return True
+
+    # Returns true if the modification was successful
+    #
+    # change_to is 0 for NoAlias, 1 for MusAlias, 2 for PartialAlias, 3 for MayAlias
+    def execute_with_modifications(self, cmd: list[str], modify_index: int,
+                                   change_to: int) -> bool:
+        return self.repalce_nth_occurence(cmd, "MayAlias", modify_index,
+                                          change_to)
+
+    def compile_file(self, index: int) -> bool:
+        cmd = [
+            self.args.compilerpath,
+            "files_sache/file" + str(index) + ".ll", '-o',
+            "files_sache/file" + str(index) + ".out"
+        ]
+        p = run(cmd, stdout=DEVNULL, stderr=DEVNULL, text=True)
+        return p.returncode == 0
+
+    def measure_outputsize(self, file: str) -> int:
+        cmd = ['llvm-size', file]
+        p = run(cmd, stdout=PIPE, stderr=PIPE, text=True)
+        if p.stderr != "":
+            print(p.stderr)
+            return -1
+        second_line = p.stdout.split("\n")[1]
+        line_list = second_line.split("\t")
+        # The other results are more info on where size is: test, data, bss
+        return int(line_list[3])
+
+
+if __name__ == "__main__":
+    InteractiveAliasAnalysisDriver().run()
