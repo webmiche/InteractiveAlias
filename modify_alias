@@ -71,7 +71,9 @@ class InteractiveAliasAnalysisDriver:
 
         cmd = [self.args.optpath, '-Os', 'csmith/file2.ll', '-S']
 
-        self.get_count_of_queries(cmd, "")
+        count = self.get_count_of_queries(cmd, "NoAlias")
+
+        print("count is " + str(count))
 
         self.compile_with_substitutions(cmd, substitutions,
                                         "files_sache/file0.ll")
@@ -79,10 +81,12 @@ class InteractiveAliasAnalysisDriver:
         print("Done with modifications")
 
         # Compile groundtruth
-        run([
+        compile_cmd = [
             self.args.compilerpath, 'files_sache/truth.ll', '-o',
-            "files_sache/file.out"
-        ],
+            "files_sache/truth.out"
+        ]
+        print(compile_cmd)
+        run(compile_cmd,
             stdout=DEVNULL,
             stderr=DEVNULL,
             text=True)
@@ -93,7 +97,7 @@ class InteractiveAliasAnalysisDriver:
         print("Done with compilation")
 
         # Measure groundtruth
-        true_size = self.measure_outputsize("files_sache/file.out")
+        true_size = self.measure_outputsize("files_sache/truth.out")
         print("True size is " + str(true_size))
 
         size = self.measure_outputsize("files_sache/file0.out")
@@ -122,7 +126,7 @@ class InteractiveAliasAnalysisDriver:
         # Compile groundtruth
         run([
             self.args.compilerpath, 'files_sache/truth.ll', '-o',
-            "files_sache/file.out"
+            "files_sache/truth.out"
         ],
             stdout=DEVNULL,
             stderr=DEVNULL,
@@ -137,7 +141,7 @@ class InteractiveAliasAnalysisDriver:
         print("Done with compilation")
 
         # Measure groundtruth
-        true_size = self.measure_outputsize("files_sache/file.out")
+        true_size = self.measure_outputsize("files_sache/truth.out")
         print("True size is " + str(true_size))
 
         for i in range(count):
@@ -167,6 +171,7 @@ class InteractiveAliasAnalysisDriver:
     def compile_with_substitutions(self, cmd: list[str],
                                    substitutions: dict[str, int],
                                    output_file_name: str) -> bool:
+        print(cmd + [" substitutions!"])
         p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
         line = p.stdout.readline().strip()
         while not line.startswith("; ModuleID"):
@@ -175,6 +180,7 @@ class InteractiveAliasAnalysisDriver:
                 return False
 
             curr_result = self.get_result_from_output(line)
+            # print("Replacing " + curr_result + " with " + str(substitutions[curr_result]))
             p.stdin.write(str(substitutions[curr_result]) + "\n")
 
             p.stdin.flush()
@@ -190,6 +196,7 @@ class InteractiveAliasAnalysisDriver:
     def get_ll_file(self, compiler_path: str, input_file: str) -> None:
         cmd = compiler_path + " -S -emit-llvm -Xclang -disable-llvm-passes -o csmith/file2.ll " + input_file + " -O1" + (
             " -I/usr/include/csmith-2.3.0" if self.args.csmith else "")
+        print(cmd)
         run(cmd.split(" "), stdout=DEVNULL, stderr=DEVNULL, text=True)
 
     # Given a command that runs opt, returns the number of MayAlias queries
@@ -198,6 +205,7 @@ class InteractiveAliasAnalysisDriver:
     # Write result into `files_sache/truth.ll`
     def get_count_of_queries(self, cmd: list[str], to_replace: str) -> int:
 
+        print(cmd + [" counting!"])
         p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
         line = p.stdout.readline().strip()
         count = 0
@@ -222,9 +230,10 @@ class InteractiveAliasAnalysisDriver:
 
         return count
 
-    def repalce_nth_occurence(self, cmd: str, to_replace: str,
+    def replace_nth_occurence(self, cmd: str, to_replace: str,
                               modify_index: int, change_to: int) -> str:
 
+        print(cmd + [" replacing occurences!"])
         p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
         line = p.stdout.readline().strip()
         index = 0
@@ -257,7 +266,7 @@ class InteractiveAliasAnalysisDriver:
     # change_to is 0 for NoAlias, 1 for MusAlias, 2 for PartialAlias, 3 for MayAlias
     def execute_with_modifications(self, cmd: list[str], modify_index: int,
                                    change_to: int) -> bool:
-        return self.repalce_nth_occurence(cmd, "MayAlias", modify_index,
+        return self.replace_nth_occurence(cmd, "MayAlias", modify_index,
                                           change_to)
 
     def compile_file(self, index: int) -> bool:
@@ -265,11 +274,13 @@ class InteractiveAliasAnalysisDriver:
             self.args.compilerpath, "files_sache/file" + str(index) + ".ll",
             '-o', "files_sache/file" + str(index) + ".out"
         ]
+        print(cmd)
         p = run(cmd, stdout=DEVNULL, stderr=DEVNULL, text=True)
         return p.returncode == 0
 
     def measure_outputsize(self, file: str) -> int:
         cmd = ['llvm-size', file]
+        print(cmd)
         p = run(cmd, stdout=PIPE, stderr=PIPE, text=True)
         if p.stderr != "":
             print(p.stderr)
