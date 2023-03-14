@@ -60,12 +60,14 @@ class InteractiveAliasAnalysisDriver:
         })
         # self.replace_single_query("NoAlias", 3)
 
+    # Replaces to_replace with replacement
     def replace_single_query(self, to_replace: str, replacement: int) -> bool:
         self.measure_single_modification_style(
             to_replace,
             modification_callback=lambda cmd, index: self.
             execute_with_modifications(cmd, index, replacement))
 
+    # Measures the map all occurences style.
     def measure_all_modification_style(self, substitutions: dict[str, int]):
         self.get_ll_file(self.args.compilerpath, self.args.input_file)
 
@@ -86,10 +88,7 @@ class InteractiveAliasAnalysisDriver:
             "files_sache/truth.out"
         ]
         print(compile_cmd)
-        run(compile_cmd,
-            stdout=DEVNULL,
-            stderr=DEVNULL,
-            text=True)
+        run(compile_cmd, stdout=DEVNULL, stderr=DEVNULL, text=True)
 
         if not self.compile_file(0):
             print("Compilation failed for modified")
@@ -105,6 +104,7 @@ class InteractiveAliasAnalysisDriver:
             print("Size measurement failed for modified")
         print("new size: " + str(size))
 
+    # Measures the nth occurence replacement style.
     def measure_single_modification_style(self, to_replace: str,
                                           modification_callback):
         self.get_ll_file(self.args.compilerpath, self.args.input_file)
@@ -152,9 +152,11 @@ class InteractiveAliasAnalysisDriver:
             elif size != true_size:
                 print(str(i) + ": " + str(size))
 
+    # Get the result in a string from the output of an alias analysis query
     def get_result_from_output(self, output: str) -> str:
         return output.split(" ")[2][:-1]
 
+    # Writes the same result back to stdin of p
     def give_same_result(self, p, res: str):
         if res == "NoAlias":
             p.stdin.write("0\n")
@@ -193,16 +195,19 @@ class InteractiveAliasAnalysisDriver:
 
         return True
 
+    # Uses the given compiler get the .ll file in csmith/file2.ll for the given
+    # input file
     def get_ll_file(self, compiler_path: str, input_file: str) -> None:
         cmd = compiler_path + " -S -emit-llvm -Xclang -disable-llvm-passes -o csmith/file2.ll " + input_file + " -O1" + (
             " -I/usr/include/csmith-2.3.0" if self.args.csmith else "")
         print(cmd)
         run(cmd.split(" "), stdout=DEVNULL, stderr=DEVNULL, text=True)
 
-    # Given a command that runs opt, returns the number of MayAlias queries
+    # Given a command that runs opt, returns the number of queries with
+    # to_replace as result
     #
-    # Returns -1 if the command or an input fails
-    # Write result into `files_sache/truth.ll`
+    # Returns -1 if the command or an input fails Write result into
+    # `files_sache/truth.ll`
     def get_count_of_queries(self, cmd: list[str], to_replace: str) -> int:
 
         print(cmd + [" counting!"])
@@ -230,8 +235,11 @@ class InteractiveAliasAnalysisDriver:
 
         return count
 
+    # Changes the nth occurence of to_replace in the given command to change_to
+    #
+    # returns true if the modification was successful
     def replace_nth_occurence(self, cmd: str, to_replace: str,
-                              modify_index: int, change_to: int) -> str:
+                              modify_index: int, change_to: int) -> bool:
 
         print(cmd + [" replacing occurences!"])
         p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
@@ -261,9 +269,12 @@ class InteractiveAliasAnalysisDriver:
 
         return True
 
+    # Changes the nth occurence of MayAlias in the given command to change_to
+    #
     # Returns true if the modification was successful
     #
-    # change_to is 0 for NoAlias, 1 for MusAlias, 2 for PartialAlias, 3 for MayAlias
+    # change_to is 0 for NoAlias, 1 for MusAlias, 2 for PartialAlias, 3 for
+    # MayAlias
     def execute_with_modifications(self, cmd: list[str], modify_index: int,
                                    change_to: int) -> bool:
         return self.replace_nth_occurence(cmd, "MayAlias", modify_index,
@@ -289,6 +300,44 @@ class InteractiveAliasAnalysisDriver:
         line_list = second_line.split("\t")
         # The other results are more info on where size is: test, data, bss
         return int(line_list[3])
+
+    # Changes the first alias queries to alias_results
+    #
+    # Afterwards, all other alias queries are changed to default
+    #
+    # if default is -1, the query stays the same
+    def compile_with_list(self,
+                          cmd: list[str],
+                          alias_results: list[int],
+                          output_file_name: str,
+                          default: int = 3) -> bool:
+        print(cmd + [" list-based!"])
+        p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
+        line = p.stdout.readline().strip()
+        index = 0
+        while not line.startswith("; ModuleID"):
+            if line.startswith("Failed"):
+                return False
+
+            curr_result = self.get_result_from_output(line)
+
+            if index < len(alias_results):
+                p.stdin.write(str(alias_results[index]) + "\n")
+            elif default == -1:
+                self.give_same_result(p, curr_result)
+            else:
+                p.stdin.write(str(default) + "\n")
+            index = index + 1
+
+            p.stdin.flush()
+            line = p.stdout.readline().strip()
+
+        output_file = open(output_file_name, 'w')
+        while line != "":
+            line = p.stdout.readline()
+            output_file.write(line)
+
+        return True
 
 
 if __name__ == "__main__":
