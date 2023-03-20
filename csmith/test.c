@@ -7,7 +7,7 @@ int main()
     return foo(0, b);
 }
 
-static int foo(int x, int *c)
+int foo(int x, int *c)
 {
     int b = 189724824;
     int *d = &b;
