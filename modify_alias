@@ -61,13 +61,13 @@ class InteractiveAliasAnalysisDriver:
         """
         Runs the tool.
         """
-        #self.measure_all_modification_style(substitutions={
-        #    "NoAlias": 3,
-        #    "MustAlias": 3,
-        #    "PartialAlias": 3,
-        #    "MayAlias": 3,
-        #})
-        self.replace_single_query(3, 3)
+        self.measure_all_modification_style(substitutions={
+            0: 0,
+            1: 0,
+            2: 0,
+            3: 0,
+        })
+        #self.replace_single_query(3, 3)
         # self.compile_spec()
 
     def compile_spec(self) -> None:
@@ -121,7 +121,7 @@ class InteractiveAliasAnalysisDriver:
         self.measure_single_modification_style(
             to_replace,
             modification_callback=lambda cmd, index: self.
-            execute_with_modifications(cmd, index, replacement))
+            execute_with_modifications(cmd, index, replacement, to_replace))
 
     # Measures the map all occurences style.
     def measure_all_modification_style(self, substitutions: dict[str, int]):
@@ -129,7 +129,7 @@ class InteractiveAliasAnalysisDriver:
 
         cmd = [self.args.optpath, '-Os', 'csmith/file2.ll', '-S']
 
-        count = self.get_count_of_queries(cmd, "NoAlias")
+        count = self.get_count_of_queries(cmd, 3)
 
         print("count is " + str(count))
 
@@ -212,23 +212,24 @@ class InteractiveAliasAnalysisDriver:
     #
     # Returns true if the modification was successful
     def compile_with_substitutions(self, cmd: list[str],
-                                   substitutions: dict[str, int],
+                                   substitutions: dict[int, int],
                                    output_file_name: str) -> bool:
         print(cmd + [" substitutions!"])
         p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
 
-        while True:
-            #  Wait for next request from client
-            message = self.socket.recv()
-            print(f"Received request: {message}")
+        while p.poll() is None:
+
+            try:
+                #  Wait for next request from client
+                message = list(self.socket.recv(flags=zmq.NOBLOCK))[0]
+            except zmq.error.Again:
+                continue
 
             #  Send reply back to client
-            self.socket.send_string(substitutions[message])
+            self.socket.send_string(str(substitutions[message]))
 
         output_file = open(output_file_name, 'w')
-        while line != "":
-            line = p.stdout.readline()
-            output_file.write(line)
+        output_file.write(p.stdout.read())
 
         return True
 
@@ -248,7 +249,7 @@ class InteractiveAliasAnalysisDriver:
     def get_count_of_queries(self, cmd: list[str], to_replace: int) -> int:
 
         print(cmd + [" counting!"])
-        p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
+        p = Popen(cmd, stdout=PIPE, text=True)
         count = 0
 
         while p.poll() is None:
@@ -287,10 +288,8 @@ class InteractiveAliasAnalysisDriver:
             except zmq.error.Again:
                 continue
 
-            print(index)
             #  Send reply back to client
             if message == to_replace and index == modify_index:
-                print("replaced")
                 self.socket.send_string(str(change_to))
             else:
                 self.socket.send_string(str(message))
@@ -310,8 +309,8 @@ class InteractiveAliasAnalysisDriver:
     # change_to is 0 for NoAlias, 1 for MusAlias, 2 for PartialAlias, 3 for
     # MayAlias
     def execute_with_modifications(self, cmd: list[str], modify_index: int,
-                                   change_to: int) -> bool:
-        return self.replace_nth_occurence(cmd, "MayAlias", modify_index,
+                                   change_to: int, to_replace: int) -> bool:
+        return self.replace_nth_occurence(cmd, to_replace, modify_index,
                                           change_to)
 
     def compile_file(self, index: int) -> bool:
@@ -346,30 +345,30 @@ class InteractiveAliasAnalysisDriver:
                           output_file_name: str,
                           default: int = 3) -> bool:
         print(cmd + [" list-based!"])
-        p = Popen(cmd, stdin=PIPE, stdout=PIPE, text=True)
-        line = p.stdout.readline().strip()
+        p = Popen(cmd, stdout=PIPE, text=True)
         index = 0
-        while not line.startswith("; ModuleID"):
-            if line.startswith("Failed"):
-                return False
 
-            curr_result = self.get_result_from_output(line)
+        while p.poll() is None:
 
+            try:
+                #  Wait for next request from client
+                message = list(self.socket.recv(flags=zmq.NOBLOCK))[0]
+            except zmq.error.Again:
+                continue
+
+
+            #  Send reply back to client
             if index < len(alias_results):
-                p.stdin.write(str(alias_results[index]) + "\n")
+                self.socket.send_string(str(alias_results[index]))
             elif default == -1:
-                self.give_same_result(p, curr_result)
+                self.socket.send_string(str(message))
             else:
-                p.stdin.write(str(default) + "\n")
+                self.socket.send_string(str(default))
             index = index + 1
 
-            p.stdin.flush()
-            line = p.stdout.readline().strip()
 
         output_file = open(output_file_name, 'w')
-        while line != "":
-            line = p.stdout.readline()
-            output_file.write(line)
+        output_file.write(p.stdout.read())
 
         return True
 
