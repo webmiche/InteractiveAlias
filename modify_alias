@@ -7,6 +7,7 @@ import time
 
 import zmq
 
+
 class InteractiveAliasAnalysisDriver:
     args: argparse.Namespace
     """
@@ -37,7 +38,8 @@ class InteractiveAliasAnalysisDriver:
             "-cp",
             "--compilerpath",
             type=str,
-            help="full path to the compiler binary (needs to understand LLVM IR)",
+            help=
+            "full path to the compiler binary (needs to understand LLVM IR)",
             default="/home/michel/ETH/AST/llvm-project/build_ast/bin/clang")
 
         arg_parser.add_argument("-csmith",
@@ -55,20 +57,18 @@ class InteractiveAliasAnalysisDriver:
         self.socket = context.socket(zmq.REP)
         self.socket.bind("tcp://*:5555")
 
-
-
     def run(self) -> None:
         """
         Runs the tool.
         """
-        self.measure_all_modification_style(substitutions={
-            0: 0,
-            1: 0,
-            2: 0,
-            3: 0,
-        })
+        #self.measure_all_modification_style(substitutions={
+        #    0: 0,
+        #    1: 0,
+        #    2: 0,
+        #    3: 0,
+        #})
         #self.replace_single_query(3, 3)
-        # self.compile_spec()
+        self.compile_spec()
 
     def compile_spec(self) -> None:
         """
@@ -79,42 +79,39 @@ class InteractiveAliasAnalysisDriver:
         my_env["CC"] = self.args.compilerpath
         my_env["CXX"] = self.args.compilerpath + "++"
         cmd = (
-            "cmake .. -G Ninja -DCMAKE_CXX_FLAGS=\"-Os\" -DCMAKE_C_FLAGS=\"-Os\" -DCMAKE_C_COMPILER=" + self.args.compilerpath + " -DCMAKE_CXX_COMPILER="  + self.args.compilerpath + "++"
-        ).split(" ")
+            "cmake .. -G Ninja -DCMAKE_CXX_FLAGS=\"-Os\" -DCMAKE_C_FLAGS=\"-Os\" -DCMAKE_C_COMPILER="
+            + self.args.compilerpath + " -DCMAKE_CXX_COMPILER=" +
+            self.args.compilerpath + "++").split(" ")
         print(cmd)
-        run(cmd, stdin=PIPE, stdout=PIPE, text=True, env=my_env, cwd="../specbuilder/build_python")
-        p = Popen("ninja", stdin=PIPE, stdout=PIPE, text=True, env=my_env, cwd="../specbuilder/build_python")
+        run(cmd, env=my_env, cwd="../specbuilder/build_python")
+        p = Popen("ninja",
+                  text=True,
+                  env=my_env,
+                  cwd="../specbuilder/build_python")
 
         substitutions = {
-             "NoAlias": 3,
-             "MustAlias": 3,
-             "PartialAlias": 3,
-             "MayAlias": 3,
+            0: 3,
+            1: 3,
+            2: 3,
+            3: 3,
         }
 
-        line = p.stdout.readline().strip()
         index = 0
-        while not line.startswith("; ModuleID"):
+        while p.poll() is None:
+
+            try:
+                #  Wait for next request from client
+                message = list(self.socket.recv(flags=zmq.NOBLOCK))[0]
+            except zmq.error.Again:
+                continue
+
             index = index + 1
             if index % 10 == 0:
                 print("Modifying " + str(index))
 
-            if line.startswith("["):
-                line = p.stdout.readline().strip()
-                continue
-
-            print(line)
-            if line.startswith("Failed"):
-                return False
-
-
-            curr_result = self.get_result_from_output(line)
-            # print("Replacing " + curr_result + " with " + str(substitutions[curr_result]))
-            p.stdin.write(str(substitutions[curr_result]) + "\n")
-
-            p.stdin.flush()
-            line = p.stdout.readline().strip()
-
+            #  Send reply back to client
+            self.socket.send_string(str(substitutions[message]))
+            index = index + 1
 
     # Replaces to_replace with replacement
     def replace_single_query(self, to_replace: int, replacement: int) -> bool:
@@ -356,7 +353,6 @@ class InteractiveAliasAnalysisDriver:
             except zmq.error.Again:
                 continue
 
-
             #  Send reply back to client
             if index < len(alias_results):
                 self.socket.send_string(str(alias_results[index]))
@@ -366,12 +362,10 @@ class InteractiveAliasAnalysisDriver:
                 self.socket.send_string(str(default))
             index = index + 1
 
-
         output_file = open(output_file_name, 'w')
         output_file.write(p.stdout.read())
 
         return True
-
 
 
 if __name__ == "__main__":
