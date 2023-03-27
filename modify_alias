@@ -68,50 +68,56 @@ class InteractiveAliasAnalysisDriver:
         #    3: 0,
         #})
         #self.replace_single_query(3, 3)
-        self.compile_spec()
 
-    def compile_spec(self) -> None:
+        substitutions = {
+            0: 3,
+            1: 3,
+            2: 3,
+            3: 3,
+        }
+
+        self.measure_spec_with_substitutions(substitutions, "build_python")
+
+    def get_env(self) -> dict[str, str]:
+        """
+        Returns the environment variables that are used by the tool.
+        """
+        my_env = os.environ.copy()
+        my_env["CC"] = self.args.compilerpath
+        my_env["CXX"] = self.args.compilerpath + "++"
+        return my_env
+
+    def setup_spec(self, folder_path: str, my_env: dict[str, str]):
+
+        cmd = "cmake .. -G Ninja -DCMAKE_CXX_FLAGS=\"-Os\" -DCMAKE_C_FLAGS=\"-Os\" -DCMAKE_C_COMPILER=" + self.args.compilerpath + " -DCMAKE_CXX_COMPILER=" + self.args.compilerpath + "++"
+        #cmd = "./spec build build_python 600 /home/michel/ETH/AST/llvm-project/build_interact/bin/clang -c"
+        print(cmd)
+        run(("mkdir " + folder_path).split(" "), cwd="../specbuilder/")
+
+        p = Popen(cmd.split(" "),
+                  cwd="../specbuilder/" + folder_path,
+                  env=my_env)
+
+        while p.poll() is None:
+
+            try:
+                #  Wait for next request from client
+                message = list(self.socket.recv(flags=zmq.NOBLOCK))[0]
+            except zmq.error.Again:
+                continue
+
+            #  Send reply back to client
+            self.socket.send_string(str(message))
+
+    def compile_spec_with_substitutions(self, substitutions: dict[int, int],
+                                        my_env: dict[str, str],
+                                        folder_path) -> None:
         """
         Compiles the spec benchmark.
         """
 
-        my_env = os.environ.copy()
-        my_env["CC"] = self.args.compilerpath
-        my_env["CXX"] = self.args.compilerpath + "++"
-        cmd = "cmake .. -G Ninja -DCMAKE_CXX_FLAGS=\"-Os\" -DCMAKE_C_FLAGS=\"-Os\" -DCMAKE_C_COMPILER=" + self.args.compilerpath + " -DCMAKE_CXX_COMPILER=" + self.args.compilerpath + "++"
-        #cmd = "./spec build build_python 600 /home/michel/ETH/AST/llvm-project/build_interact/bin/clang -c"
-        print(cmd)
-        p = Popen(cmd.split(" "),
-                  cwd="../specbuilder/build_python",
-                  env=my_env)
-
-        substitutions = {
-            0: 0,
-            1: 1,
-            2: 2,
-            3: 3,
-        }
-
-        index = 0
-        while p.poll() is None:
-
-            try:
-                #  Wait for next request from client
-                message = list(self.socket.recv(flags=zmq.NOBLOCK))[0]
-            except zmq.error.Again:
-                continue
-
-            index = index + 1
-            if index % 100000000 == 0:
-                print("Modifying " + str(index))
-
-            #  Send reply back to client
-            self.socket.send_string(str(substitutions[message]))
-
-        p = Popen("ninja".split(" "),
-                  stdout=DEVNULL,
-                  stderr=DEVNULL,
-                  cwd="../specbuilder/build_python",
+        p = Popen("ninja -j1".split(" "),
+                  cwd="../specbuilder/" + folder_path,
                   env=my_env)
 
         while p.poll() is None:
@@ -122,15 +128,24 @@ class InteractiveAliasAnalysisDriver:
             except zmq.error.Again:
                 continue
 
-            index = index + 1
-            if index % 100000 == 0:
-                print("Modifying " + str(index))
+            #index = index + 1
+            #if index % 100000 == 0:
+            #    print("Modifying " + str(index))
 
             #  Send reply back to client
             self.socket.send_string(str(substitutions[message]))
 
-        run("python3 compare_sizes.py".split(" "),
-            cwd="../specbuilder")
+    def measure_spec_with_substitutions(self, substitutions: dict[int, int],
+                                        folder_path: str):
+
+        my_env = self.get_env()
+
+        self.setup_spec(folder_path, my_env)
+
+        self.compile_spec_with_substitutions(substitutions, my_env,
+                                             folder_path)
+
+        run("python3 compare_sizes.py".split(" "), cwd="../specbuilder")
 
     # Replaces to_replace with replacement
     def replace_single_query(self, to_replace: int, replacement: int) -> bool:
