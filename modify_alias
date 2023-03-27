@@ -78,21 +78,17 @@ class InteractiveAliasAnalysisDriver:
         my_env = os.environ.copy()
         my_env["CC"] = self.args.compilerpath
         my_env["CXX"] = self.args.compilerpath + "++"
-        cmd = (
-            "cmake .. -G Ninja -DCMAKE_CXX_FLAGS=\"-Os\" -DCMAKE_C_FLAGS=\"-Os\" -DCMAKE_C_COMPILER="
-            + self.args.compilerpath + " -DCMAKE_CXX_COMPILER=" +
-            self.args.compilerpath + "++").split(" ")
+        cmd = "cmake .. -G Ninja -DCMAKE_CXX_FLAGS=\"-Os\" -DCMAKE_C_FLAGS=\"-Os\" -DCMAKE_C_COMPILER=" + self.args.compilerpath + " -DCMAKE_CXX_COMPILER=" + self.args.compilerpath + "++"
+        #cmd = "./spec build build_python 600 /home/michel/ETH/AST/llvm-project/build_interact/bin/clang -c"
         print(cmd)
-        run(cmd, env=my_env, cwd="../specbuilder/build_python")
-        p = Popen("ninja",
-                  text=True,
-                  env=my_env,
-                  cwd="../specbuilder/build_python")
+        p = Popen(cmd.split(" "),
+                  cwd="../specbuilder/build_python",
+                  env=my_env)
 
         substitutions = {
-            0: 3,
-            1: 3,
-            2: 3,
+            0: 0,
+            1: 1,
+            2: 2,
             3: 3,
         }
 
@@ -106,12 +102,35 @@ class InteractiveAliasAnalysisDriver:
                 continue
 
             index = index + 1
-            if index % 10 == 0:
+            if index % 100000000 == 0:
                 print("Modifying " + str(index))
 
             #  Send reply back to client
             self.socket.send_string(str(substitutions[message]))
+
+        p = Popen("ninja".split(" "),
+                  stdout=DEVNULL,
+                  stderr=DEVNULL,
+                  cwd="../specbuilder/build_python",
+                  env=my_env)
+
+        while p.poll() is None:
+
+            try:
+                #  Wait for next request from client
+                message = list(self.socket.recv(flags=zmq.NOBLOCK))[0]
+            except zmq.error.Again:
+                continue
+
             index = index + 1
+            if index % 100000 == 0:
+                print("Modifying " + str(index))
+
+            #  Send reply back to client
+            self.socket.send_string(str(substitutions[message]))
+
+        run("python3 compare_sizes.py".split(" "),
+            cwd="../specbuilder")
 
     # Replaces to_replace with replacement
     def replace_single_query(self, to_replace: int, replacement: int) -> bool:
