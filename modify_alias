@@ -55,7 +55,7 @@ class InteractiveAliasAnalysisDriver:
 
         context = zmq.Context()
         self.socket = context.socket(zmq.REP)
-        self.socket.bind("tcp://*:5555")
+        self.socket.bind("ipc:///tmp/0")
 
     def run(self) -> None:
         """
@@ -145,7 +145,7 @@ class InteractiveAliasAnalysisDriver:
         self.compile_spec_with_substitutions(substitutions, my_env,
                                              folder_path)
 
-        run("python3 compare_sizes.py".split(" "), cwd="../specbuilder")
+        run(["python3", "compare_sizes.py", folder_path + "/", "build_with_exceptions/"], cwd="../specbuilder")
 
     # Replaces to_replace with replacement
     def replace_single_query(self, to_replace: int, replacement: int) -> bool:
