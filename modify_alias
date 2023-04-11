@@ -116,10 +116,11 @@ class InteractiveAliasAnalysisDriver:
         Compiles the spec benchmark.
         """
 
-        p = Popen("ninja -j1".split(" "),
+        p = Popen("ninja -j1 605".split(" "),
                   cwd="../specbuilder/" + folder_path,
                   env=my_env)
 
+        index = 0
         while p.poll() is None:
 
             try:
@@ -128,12 +129,13 @@ class InteractiveAliasAnalysisDriver:
             except zmq.error.Again:
                 continue
 
-            #index = index + 1
+            index = index + 1
             #if index % 100000 == 0:
             #    print("Modifying " + str(index))
 
             #  Send reply back to client
             self.socket.send_string(str(substitutions[message]))
+        print("index is " + str(index))
 
     def measure_spec_with_substitutions(self, substitutions: dict[int, int],
                                         folder_path: str):
@@ -145,7 +147,11 @@ class InteractiveAliasAnalysisDriver:
         self.compile_spec_with_substitutions(substitutions, my_env,
                                              folder_path)
 
-        run(["python3", "compare_sizes.py", folder_path + "/", "build_with_exceptions/"], cwd="../specbuilder")
+        run([
+            "python3", "compare_sizes.py", "build_with_exceptions/",
+            folder_path + "/", "605"
+        ],
+            cwd="../specbuilder")
 
     # Replaces to_replace with replacement
     def replace_single_query(self, to_replace: int, replacement: int) -> bool:
